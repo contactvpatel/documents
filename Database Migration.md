@@ -107,41 +107,7 @@
 
 ---
 
-## 3. **Blue-Green Deployment (Dual Schema Approach)**
-
-### **Migration Strategy:**
-- In a **Blue-Green Deployment**, two separate schemas (or databases) are maintained: one active (Blue) and one inactive (Green). During migration, the inactive (Green) schema is updated, while the application continues running on the active (Blue) schema. After the migration is verified and tested, the application is switched to the Green schema, making it the active one.
-
-- **Steps**:
-  1. **Create a copy** of the current database schema (`Green schema`), which will become the new version after migration.
-  2. Apply all **migrations** to the `Green schema`. Perform necessary data transformations or new feature deployments.
-  3. Run tests in the `Green schema` to ensure everything works as expected.
-  4. Once testing is complete, **switch the application** to use the `Green schema`.
-  5. If everything works fine, the old `Blue schema` can be dropped, or kept as a backup.
-
-- This strategy ensures **minimal downtime** because the application is continuously running on the `Blue schema` until you're ready to switch.
-
-### **Rollback Strategy**:
-- If there’s an issue after switching to the `Green schema`, simply switch the application back to the `Blue schema`. Since the `Blue schema` remains unchanged, the rollback is **instantaneous**.
-
-- After reverting to the `Blue schema`, the `Green schema` can be investigated for issues or completely rebuilt.
-
-- **Data synchronization**:
-  - In more complex systems, you might need to synchronize data between the old (Blue) and new (Green) schemas, especially if the application continues writing to the `Blue schema` while the migration is happening in `Green`.
-  - This can be done via **database replication** or other data transfer mechanisms.
-
-### **Pros**:
-- **Near-zero downtime**: The application continues to run on the `Blue schema` while the migration happens in `Green`.
-- **Fast rollback**: If there’s an issue, you can quickly switch back to the `Blue schema` without needing to execute rollback scripts.
-- **Comprehensive testing**: You can fully test the `Green schema` before making it live.
-
-### **Cons**:
-- **Resource overhead**: Requires maintaining two schemas (or two databases) simultaneously, which consumes additional storage and potentially adds operational complexity.
-- **Data synchronization challenges**: If data is being written to the `Blue schema` during migration, you must synchronize it with the `Green schema` before switching.
-
----
-
-## 4. **Backward-Compatible Migrations (Zero-Downtime)**
+## 3. **Backward-Compatible Migrations (Zero-Downtime)**
 
 ### **Migration Strategy:**
 - The **backward-compatible migration** approach ensures that the database schema changes do not break existing functionality. This allows you to run old and new versions of the application concurrently during the migration, minimizing risk and ensuring zero downtime.
@@ -178,7 +144,7 @@
 
 ---
 
-## 5. **Database Branching with Feature Flags**
+## 4. **Database Branching with Feature Flags**
 
 ### **Migration Strategy:**
 - **Feature flags** are used to control access to new features or schema changes. With this approach, the migration is deployed first, but the application only begins using the new schema when the feature flag is enabled.
@@ -216,7 +182,3 @@
 ### **Cons**:
 - **Added complexity**: Managing feature flags and ensuring the application handles both old and new schema versions can be challenging.
 - Requires coordination between the **application code** and the **database schema**, which may lead to additional technical debt if feature flags are not cleaned up after use.
-
----
-
-These detailed strategies cover various scenarios for database migrations and rollbacks, from simple manual migrations to advanced approaches involving backward compatibility and feature flags. The right strategy depends on your specific needs, including the complexity of your schema changes, your tolerance for downtime, and the size of your team.

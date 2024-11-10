@@ -122,3 +122,60 @@ git commit -m "Merged feature with squashed commits"
 # Step 4: Push to the remote repository
 git push
 ```
+---
+
+### Tool
+
+#### Visual Studio Code (VS Code)
+
+##### Setup
+
+- Install GitLens - Git supercharged
+- Open Command Palette and type in GitLens: Enable Interactive Rebase Editor and select it to enable rebase editor
+     ![image](https://github.com/user-attachments/assets/f1e41573-e25b-4bb4-91a7-a62120bda1af)
+- Execute below command to launch rebase editor (like VS Code in our case) when we use rebase command
+```bash
+git config --global core.editor "code --wait"
+```
+- Create a feature branche for your local development and have some commits in that feature branch
+
+##### Rebase & Squash
+
+- Create a feature branche for your local development and have some commits in that feature branch
+- Run below command to perfrom a rebase with main branch (make sure your local main branch has latest code - pull latest from origin main) and it will replay your feature branch changes on top of the latest commits in `main`. You may need to resolve any merge conflit that comes up.
+```bash
+git rebase -i main 
+```
+- It will prompt below GitLens Interactibe Rebase UI that can also allow to perform squash merge
+
+![image](https://github.com/user-attachments/assets/f143fa5a-fc03-47b1-a0c1-ea021bd95a82)
+
+-  Keep one commit as pick and choose rest as squash from dropdown
+
+![image](https://github.com/user-attachments/assets/857a7ba3-1a56-48e4-a9d1-c9e11a390476)
+
+- Then click on Start Rebase to apply rebase
+
+![image](https://github.com/user-attachments/assets/511a911e-8ef6-46e4-848c-d88df8705d76)
+
+- After rebase, it will prompt for commit message that you can modify as shown below
+
+![image](https://github.com/user-attachments/assets/c7d60c89-c971-4ff2-bd2e-4b9aeab11d7f)
+
+- You can modify commit message as per your need, save and close that window
+
+![image](https://github.com/user-attachments/assets/e9930681-fee5-4d92-90e4-d444456df12e)
+
+![image](https://github.com/user-attachments/assets/4bce29c2-aabc-40a4-8a25-28cb7c0e9867)
+
+- Now run below command to push your squash commit changes to origin
+
+```bash
+git push -f
+```
+![image](https://github.com/user-attachments/assets/89b3ad03-4684-4bf1-8911-5d9c9e6ba4f9)
+
+![image](https://github.com/user-attachments/assets/d37c478f-1acf-41e7-b6c7-0adb51e33ce3)
+
+
+

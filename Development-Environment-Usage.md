@@ -44,7 +44,10 @@ Business Applications include **EMS**, **ERS**, **ALM**, and others.
 - Maintain proper documentation of version compatibility between Core and Business Applications.  
 - Schedule regular sync-ups to address any dependency updates or changes.
 
-Here’s a table outline listing the UAT environment details for **SSO**, **MIS**, and **MDS**, including their UI and API links:
+#### **Missing Users, Roles & Positions**  
+- If users, roles, positions or anything else are missing in Core Application's UAT environment then Technical Lead should be able to manually create those in Core Application's UAT environment.
+
+Here’s a table outline listing the UAT environment details for **Core Applications (SSO, MIS, MDS, ASM)**, including their UI and API links:
 
 | **Application** | **Environment** | **UI Link**                | **API Link**                  |
 |------------------|-----------------|----------------------------|-------------------------------|

@@ -8,29 +8,29 @@ Git provides several ways to integrate changes from one branch to another. Two o
 Rebasing is a powerful tool for streamlining a feature branch by moving or “replaying” your work on top of another branch, typically the `main` branch. Instead of creating a merge commit, rebasing applies each commit in sequence, maintaining a cleaner history.
 
 ##### How Git Rebase Works
-Consider a situation where your feature branch is based on an earlier commit in the `main` branch, and the `main` branch has since received new commits.
+Consider a situation where your feature branch is based on an earlier commit in the `develop` branch, and the `develop` branch has since received new commits.
 
 ```bash
 # Feature branch history
 o---o---o (feature)
      \
-      o---o---o (main)
+      o---o---o (develop)
 ```
 
-If you use `git merge` to merge `main` into `feature`, Git will create a merge commit:
+If you use `git merge` to merge `develop` into `feature`, Git will create a merge commit:
 
 ```bash
-# After git merge main into feature
+# After git merge develop into feature
 o---o---o---M (feature)
      \     /
-      o---o---o (main)
+      o---o---o (develop)
 ```
 
-Instead, `git rebase` will replay your changes on top of the latest commits in `main`:
+Instead, `git rebase` will replay your changes on top of the latest commits in `develop`:
 
 ```bash
-# After git rebase main
-o---o---o (main)
+# After git rebase develop
+o---o---o (develop)
            \
             o---o---o (feature)
 ```
@@ -38,7 +38,7 @@ o---o---o (main)
 ##### Command for Git Rebase
 ```bash
 git checkout feature
-git rebase main
+git rebase develop
 ```
 
 ##### Advantages of Git Rebase
@@ -50,14 +50,14 @@ git rebase main
 - **Rewriting History**: Rebasing rewrites commit history, which can lead to problems if the feature branch is shared with others. If others are working on the same branch, rebasing will result in **diverged history**, causing confusion or conflicts.
 
 ##### Example of Git Rebase
-Consider you have two branches, `feature` and `main`. The `main` branch has new commits while you're working on your `feature` branch. To incorporate the latest changes from `main` into your feature branch and reapply your commits on top of them, you can:
+Consider you have two branches, `feature` and `develop`. The `develop` branch has new commits while you're working on your `feature` branch. To incorporate the latest changes from `develop` into your feature branch and reapply your commits on top of them, you can:
 
 ```bash
 # Step 1: Switch to your feature branch
 git checkout feature
 
-# Step 2: Rebase the feature branch onto main
-git rebase main
+# Step 2: Rebase the feature branch onto develop
+git rebase develop
 
 # Step 3: Push the changes (force push may be needed if the branch was already pushed)
 git push --force
@@ -68,19 +68,19 @@ git push --force
 #### 2. Git Squash Merge
 
 ##### Importance
-Squash merge consolidates multiple commits into a single commit before merging them into the main branch. This is especially useful when a feature branch has numerous small commits that don’t need to be tracked individually in the main history.
+Squash merge consolidates multiple commits into a single commit before merging them into the develop branch. This is especially useful when a feature branch has numerous small commits that don’t need to be tracked individually in the develop history.
 
 ##### How Git Squash Merge Works
 Squashing takes a sequence of commits in your branch and combines them into a single commit, making the history cleaner and easier to read. After squashing, Git performs the merge into the target branch.
 
 ```bash
 # Before squash merge
-o---o---o (main)
+o---o---o (develop)
            \
             o---o---o---o (feature)
 
 # After squash merge
-o---o---o---O (main)
+o---o---o---O (develop)
 ```
 
 ##### Command for Git Squash Merge
@@ -92,13 +92,13 @@ o---o---o---O (main)
 
 2. **Squash During Merge**:
     ```bash
-    git checkout main
+    git checkout develop
     git merge --squash feature
     git commit
     ```
 
 ##### Advantages of Git Squash Merge
-- **Simplified History**: Combines all commits into one, which helps when many small commits aren’t valuable to keep in the main history.
+- **Simplified History**: Combines all commits into one, which helps when many small commits aren’t valuable to keep in the develop history.
 - **Improved Readability**: Reviewers can focus on the overall change rather than every individual commit.
 - **Organized**: Squash merges are ideal for repositories where commits should be logical units of work rather than a running log of every minor change.
 
@@ -107,11 +107,11 @@ o---o---o---O (main)
 - **Difficult to Trace Changes**: If debugging an issue, tracing the exact point where a problem was introduced can be harder since the commits are combined.
 
 ##### Example of Git Squash Merge
-Consider you’ve made several commits in your `feature` branch that you want to squash into one commit and merge into `main`:
+Consider you’ve made several commits in your `feature` branch that you want to squash into one commit and merge into `develop`:
 
 ```bash
-# Step 1: Checkout main branch
-git checkout main
+# Step 1: Checkout develop branch
+git checkout develop
 
 # Step 2: Perform a squash merge
 git merge --squash feature
@@ -131,20 +131,19 @@ git push
 ##### Setup
 
 - Install GitLens - Git supercharged
-- Open Command Palette and type in GitLens: Enable Interactive Rebase Editor and select it to enable rebase editor
+- Open Command Palette and type in **GitLens: Enable Interactive Rebase Editor** and select it to enable rebase editor
      ![image](https://github.com/user-attachments/assets/f1e41573-e25b-4bb4-91a7-a62120bda1af)
-- Execute below command to launch rebase editor (like VS Code in our case) when we use rebase command
+- Open a terminal and execute below command to launch rebase editor (like VS Code in our case) when we use rebase command
 ```bash
 git config --global core.editor "code --wait"
 ```
-- Create a feature branche for your local development and have some commits in that feature branch
 
 ##### Rebase & Squash
 
-- Create a feature branche for your local development and have some commits in that feature branch
-- Run below command to perfrom a rebase with main branch (make sure your local main branch has latest code - pull latest from origin main) and it will replay your feature branch changes on top of the latest commits in `main`. You may need to resolve any merge conflit that comes up.
+- Create a feature branch for your local development and have some commits in that feature branch
+- Run below command to perfrom a rebase with develop branch (make sure your local develop branch has latest code - pull latest from origin develop) and it will apply your feature branch changes on top of the latest commits in `develop`. You may need to resolve any merge conflit that comes up.
 ```bash
-git rebase -i main 
+git rebase -i origin/develop 
 ```
 - It will prompt below GitLens Interactibe Rebase UI that can also allow to perform squash merge
 
@@ -162,7 +161,7 @@ git rebase -i main
 
 ![image](https://github.com/user-attachments/assets/c7d60c89-c971-4ff2-bd2e-4b9aeab11d7f)
 
-- You can modify commit message as per your need, save and close that window
+- You can modify commit message as per your need, save and close that COMMIT_EDITMSG window
 
 ![image](https://github.com/user-attachments/assets/e9930681-fee5-4d92-90e4-d444456df12e)
 

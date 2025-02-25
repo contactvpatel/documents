@@ -1,246 +1,348 @@
-# **Using DbUp for Schema Migrations in a .NET API**
+# **Database Migration with DbUp in .NET**
 Here is a comprehensive end-to-end guide on using **DbUp** in a .NET API project for schema migration, including a rollback strategy and multiple iteration examples.
 
-## **1. Overview**
-DbUp is a .NET library for managing database schema migrations. It uses plain SQL scripts to upgrade and manage database schemas incrementally. This document outlines how to:
-- Set up DbUp in a .NET API.
-- Implement schema migration.
-- Enable a rollback strategy.
-- Demonstrate usage with multiple iterations.
+## Introduction
+DbUp is a database migration tool that allows developers to manage schema changes in a controlled and automated manner. This document provides a detailed guide on how to use DbUp in a .NET API project for managing PostgreSQL database migrations, including its advantages and disadvantages.
 
-More Info: https://dbup.readthedocs.io/en/latest/
+For more information, visit the official DbUp documentation: [DbUp Documentation](https://dbup.readthedocs.io/en/latest/)
 
----
+## Implementation Details
 
-## **2. Prerequisites**
-1. **.NET Environment**: Ensure the .NET 6 or later SDK is installed.
-2. **Database**: Any database supported by DbUp (SQL Server, SQLite, PostgreSQL, etc.).
-3. **NuGet Packages**:
-   - `DbUp` (Base package for DbUp operations)
-   - `DbUp.ScriptProviders` (Optional for advanced script loading)
+### 1. Installing DbUp NuGet Package
+To use DbUp for PostgreSQL or SQL Server, install the appropriate NuGet package:
 
----
-
-## **3. Folder Structure**
-Organize the project as follows:
-
-```plaintext
-ProjectRoot
-│
-├── Migrations
-│   ├── 20241124_153000_AddCustomersTable.sql
-│   ├── 20241124_153010_AddOrdersTable.sql
-│   └── Rollback
-│       ├── 20241124_153000_Rollback_AddCustomersTable.sql
-│       └── 20241124_153010_Rollback_AddOrdersTable.sql
-│
-└── DbUp
-    ├── MigrationManager.cs
-    └── Program.cs
-```
-
----
-
-## **4. Step-by-Step Implementation**
-
-### **4.1. Add DbUp to Your Project**
-Run the following command in the project root:
-
+For PostgreSQL:
 ```bash
-dotnet add package DbUp
+dotnet add package DbUp.Postgresql
 ```
 
-### **4.2. Create a Migration Manager**
-Add a `MigrationManager.cs` to handle schema upgrades using a transaction-scoped connection with versioning using the built-in SchemaVersions table and enhanced logging.
+For SQL Server:
+```bash
+dotnet add package DbUp.SqlServer
+```
+
+### 2. Setting Up DbUp Migration
+In the provided code, the `DatabaseMigrationInitFilter` class implements `IStartupFilter`, ensuring that database migrations are executed during application startup.
+
+#### **Key Components**:
+1. **Checking Migration Status**:
+   - The migration process begins if `EnableDatabaseMigration` is set to `true` in the application settings.
+   - Migration scripts are loaded from the `DbUpMigration/Migrations` directory.
+
+2. **Ensuring Database Existence**:
+   - `EnsureDatabase.For.PostgresqlDatabase(dbConnectionString);` ensures that the PostgreSQL database exists before applying migrations.
+
+3. **Advisory Lock Mechanism**:
+   - Implements `pg_try_advisory_lock()` to ensure that only one instance applies migrations in a concurrent environment.
+   - The lock is held for up to 60 seconds while retrying every 5 seconds.
+
+4. **Executing Migrations**:
+   - Uses `DeployChanges.To.PostgresqlDatabase(dbConnectionString)` to apply scripts.
+   - Runs migration scripts only if required.
+   - Logs migration progress using `DbUpLoggerExtension`.
+
+5. **Seeding Data**:
+   - Seed scripts are executed from the `DbUpMigration/Seeds/<Environment>` directory.
+   - Seed execution follows a similar approach to migrations.
+
+6. **Transaction Support**:
+   - Migrations and seeding are executed within transactions to maintain atomicity.
 
 ```csharp
+
 using DbUp;
-using DbUp.Engine.Output;
-using System;
-using System.Data;
-using System.Data.SqlClient;
+using Microsoft.Extensions.Options;
+using Npgsql;
+using PBR.Core.Models;
+using PBR.Util.Logging;
+using PBR.Util.Models;
 
-public class MigrationManager
+namespace PBR.Api.Filters
 {
-    public static void Execute(string connectionString)
+    public class DatabaseMigrationInitFilter : IStartupFilter
     {
-        var logger = new ConsoleUpgradeLog();
+        private readonly IOptionsMonitor<AppSettingModel> _appSettingModel;
+        private readonly IOptionsMonitor<DbConnectionModel> _dbConnectionModel;
+        public readonly ILogger _logger;
 
-        // Create a connection to the database
-        using var connection = new SqlConnection(connectionString);
-        connection.Open();
-
-        // Start a transaction
-        using var transaction = connection.BeginTransaction(IsolationLevel.Serializable);
-
-        try
+        public DatabaseMigrationInitFilter(IOptionsMonitor<AppSettingModel> appSettingModel,
+            IOptionsMonitor<DbConnectionModel> dbConnectionModel,
+            ILogger<DatabaseMigrationInitFilter> logger)
         {
-            // Configure the DbUp upgrader
-            var upgrader = DeployChanges.To
-                .SqlDatabase(() => connection, () => transaction)
-                .WithScriptsEmbeddedInAssembly(typeof(MigrationManager).Assembly)
-                .LogTo(logger) // Use detailed logging
-                .JournalToSqlTable("dbo", "SchemaVersions") // Use SchemaVersions table for versioning
-                .Build();
+            _appSettingModel = appSettingModel ?? throw new ArgumentNullException(nameof(appSettingModel));
+            _dbConnectionModel = dbConnectionModel ?? throw new ArgumentNullException(nameof(dbConnectionModel));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        }
 
-            // Perform the upgrade
-            var result = upgrader.PerformUpgrade();
-
-            if (!result.Successful)
+        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next)
+        {
+            if (_appSettingModel.CurrentValue.EnableDatabaseMigration)
             {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine($"Migration failed: {result.Error}");
-                Console.ResetColor();
+                _logger.LogInformationExtension("Database migration is enabled; starting the migration process.");
 
-                // Rollback the transaction if migration fails
-                transaction.Rollback();
-                throw new Exception("Database upgrade failed!");
+                var dbConnectionString = DbConnectionModel.CreateConnectionString(_dbConnectionModel.CurrentValue.Read);
+
+                var dbUpLogger = new DbUpLoggerExtension(_logger);
+
+                string migrationPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "DbUpMigration", "Migrations");
+
+                if (Directory.Exists(migrationPath) && Directory.EnumerateFiles(migrationPath).Any())
+                {
+                    // Ensure Database exists, if not then create it
+                    EnsureDatabase.For.PostgresqlDatabase(dbConnectionString);
+
+                    using var connection = new NpgsqlConnection(dbConnectionString);
+                    connection.Open();
+
+                    // Attempt to acquire the advisory lock with a timeout (Ensures only one process executes the DbUp migration if multiple processes are running simultaneously)
+                    bool lockAcquired = false;
+                    var startTime = DateTime.Now;
+
+                    while ((DateTime.Now - startTime).TotalSeconds < 60) // Set a 60 seconds timeout for waiting for the lock
+                    {
+                        using var lockCommand = new NpgsqlCommand($"SELECT pg_try_advisory_lock({_appSettingModel.CurrentValue.PostgresqlAdvisoryLockKey});", connection);
+                        var result = (bool)lockCommand.ExecuteScalar();
+
+                        if (result)
+                        {
+                            lockAcquired = true;
+                            break;
+                        }
+
+                        // Wait for 5 second before retrying
+                        Thread.Sleep(5000);
+                    }
+
+                    if (lockAcquired)
+                    {
+                        try
+                        {
+                            var migrationUpgrader = DeployChanges.To
+                                                    .PostgresqlDatabase(dbConnectionString)
+                                                    .WithScriptsFromFileSystem(migrationPath)
+                                                    .WithTransaction()
+                                                    .WithExecutionTimeout(TimeSpan.FromMinutes(10))
+                                                    .LogTo(dbUpLogger)
+                                                    .Build();
+
+                            if (!migrationUpgrader.IsUpgradeRequired())
+                            {
+                                _logger.LogInformationExtension("No pending migrations detected; skipping the migration process.");
+
+                                // Run Data Seed Scripts
+                                SeedData(dbConnectionString);
+                            }
+                            else
+                            {
+                                _logger.LogInformationExtension("New database migrations found; initiating the migration process.");
+
+                                // Run Migration Scripts
+                                var operation = migrationUpgrader.PerformUpgrade();
+                                if (operation.Successful)
+                                {
+                                    _logger.LogInformationExtension("Database migration has been successfully completed.");
+
+                                    // Run Data Seed Scripts Only if Migration Succeeds
+                                    SeedData(dbConnectionString);
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogErrorExtension("An exception occurred during the database migration process.", ex);
+                        }
+                        finally
+                        {
+                            // Release the advisory lock after migrations/seeds are done
+                            using var unlockCommand = new NpgsqlCommand($"SELECT pg_advisory_unlock({_appSettingModel.CurrentValue.PostgresqlAdvisoryLockKey});", connection);
+                            unlockCommand.ExecuteNonQuery();
+                            connection.Close();
+                        }
+                    }
+                }
+                else
+                {
+                    _logger.LogInformationExtension("No database migration script found; skipping the migration process.");
+                }
             }
-
-            Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine("Database upgrade successful!");
-            Console.ResetColor();
-
-            // Commit the transaction on success
-            transaction.Commit();
+            return next;
         }
-        catch (Exception ex)
+
+        private void SeedData(string dbConnectionString)
         {
-            // Rollback the transaction on any exception
-            transaction.Rollback();
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine($"Transaction rolled back: {ex.Message}");
-            Console.ResetColor();
-            throw;
-        }
-        finally
-        {
-            connection.Close();
+            if (!string.IsNullOrEmpty(_appSettingModel.CurrentValue.Environment))
+            {
+                _logger.LogInformationExtension($"Seeding data for environment: {_appSettingModel.CurrentValue.Environment}");
+
+                var dbUpLogger = new DbUpLoggerExtension(_logger);
+
+                string seedPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "DbUpMigration", "Seeds", _appSettingModel.CurrentValue.Environment);
+
+                if (Directory.Exists(seedPath) && Directory.EnumerateFiles(seedPath).Any())
+                {
+                    var seedUpgrader = DeployChanges.To
+                                        .PostgresqlDatabase(dbConnectionString)
+                                        .WithScriptsFromFileSystem(seedPath)
+                                        .WithTransaction()
+                                        .WithExecutionTimeout(TimeSpan.FromMinutes(10))
+                                        .LogTo(dbUpLogger)
+                                        .Build();
+
+                    if (!seedUpgrader.IsUpgradeRequired())
+                    {
+                        _logger.LogInformationExtension("No new seed data script found; skipping the seeding process.");
+                    }
+                    else
+                    {
+                        var seedResult = seedUpgrader.PerformUpgrade();
+
+                        if (seedResult.Successful)
+                        {
+                            _logger.LogInformationExtension($"Data seeding for {_appSettingModel.CurrentValue.Environment} completed successfully!");
+                        }
+                        else
+                        {
+                            _logger.LogErrorExtension($"An error occurred during data seeding for {_appSettingModel.CurrentValue.Environment}.", seedResult.Error);
+                        }
+                    }
+                }
+                else
+                {
+                    _logger.LogInformationExtension("No seed data script found; skipping the seeding process.");
+                }
+            }
         }
     }
 }
+
+
 ```
-### **4.3. Add SQL Migration Scripts**
-Place the following scripts in the `Migrations` folder:
-
-#### **`20241124_153000_AddCustomersTable.sql`**
-```sql
-CREATE TABLE Customers (
-    Id INT IDENTITY(1,1) PRIMARY KEY,
-    Name NVARCHAR(100),
-    Email NVARCHAR(100),
-    CreatedDate DATETIME DEFAULT GETDATE()
-);
-```
-
-#### **`20241124_153010_AddOrdersTable.sql`**
-```sql
-CREATE TABLE Orders (
-    Id INT IDENTITY(1,1) PRIMARY KEY,
-    CustomerId INT FOREIGN KEY REFERENCES Customers(Id),
-    OrderDate DATETIME DEFAULT GETDATE(),
-    Amount DECIMAL(18,2)
-);
-```
-
-#### Rollback Scripts in `Migrations/Rollback`:
-##### **`20241124_153000_Rollback_AddCustomersTable.sql`**
-```sql
-DROP TABLE IF EXISTS Customers;
-```
-
-##### **`20241124_153010_Rollback_AddOrdersTable.sql`**
-```sql
-DROP TABLE IF EXISTS Orders;
-```
-
-### **4.4 SchemaVersions Table for Versioning**
-
-DbUp automatically creates a `SchemaVersions` table if it does not exist. It stores details about which scripts have been executed, ensuring:
-- Scripts are only executed once.
-- You can track the migration history.
-
-The table has the following structure:
-
-| ScriptName          | Applied          |
-|---------------------|------------------|
-| `20241124_153000_AddCustomersTable.sql` | `2024-11-24 15:30:00` |
-| `20241124_153010_AddOrdersTable.sql` | `2024-11-24 15:30:10` |
-
----
-
-### **4.5. Configure the Application**
-Update the `Program.cs` to execute migrations:
 
 ```csharp
-using System;
 
-class Program
+using DbUp.Engine.Output;
+using PBR.Util.Logging;
+
+public class DbUpLoggerExtension : IUpgradeLog
 {
-    static void Main(string[] args)
+    public readonly ILogger _logger;
+
+    public DbUpLoggerExtension(ILogger logger)
     {
-        var connectionString = "YourConnectionStringHere";
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    }
 
-        Console.WriteLine("Executing database migrations...");
-        try
-        {
-            MigrationManager.Execute(connectionString);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error during migration: {ex.Message}");
-        }
+    public void WriteInformation(string format, params object[] args)
+    {
+        _logger.LogInformationExtension(string.Format(format, args));
+    }
 
-        Console.WriteLine("Database operations completed.");
+    public void WriteError(string format, params object[] args)
+    {
+        _logger.LogErrorExtension(string.Format(format, args), null);
+    }
+
+    public void WriteWarning(string format, params object[] args)
+    {
+        _logger.LogWarningExtension(string.Format(format, args));
     }
 }
+
+
 ```
 
----
+### 3. Integration in `Program.cs`
 
-## **5. Multiple Iteration Example**
+```csharp
+// Add DbUp Migration
+services.AddTransient<IStartupFilter, DatabaseMigrationInitFilter>();
+```
+This ensures that `DatabaseMigrationInitFilter` runs during application startup.
 
-### **Iteration 1**: Adding New Tables
-Run the program to apply the following migrations:
-1. `20241124_153000_AddCustomersTable.sql`
-2. `20241124_153010_AddOrdersTable.sql`
-
-If any migration fails, run rollback scripts manually if needed. It may not need since migration applied using transaction scope hence rollback if it fails:
-- `20241124_153000_Rollback_AddCustomersTable.sql`
-- `20241124_153010_Rollback_AddOrdersTable.sql`
-
-### **Iteration 2**: Altering the Database
-Add a new migration script (`20241125_172000_AddIndexToOrders.sql`) for creating an index:
-
-#### **`20241125_172000_AddIndexToOrders.sql`**
-```sql
-CREATE INDEX IX_CustomerId ON Orders (CustomerId);
+### 4. Migration Folder Structure
+```
+DbUpMigration
+ ├── Migrations  (Contains migration scripts)
+ │   ├── 20250212-111700-PBR-34-Initial-Schema.sql
+ │   ├── 20250213-103000-PBR-35-Move-Detarment-To-Workspace.sql 
+ ├── Rollbacks   (Contains rollback scripts)
+ ├── Seeds       (Contains environment-specific seed data)
+ │   ├── Dev
+ │   │	├──	20250224-013700-PBR-34-Default-PowerBi-Account.sql
+ │   ├── QA
+ │   ├── UAT
 ```
 
-Rollback script:
-#### **`20241125_172000_Rollback_AddIndexToOrders.sql`**
-```sql
-DROP INDEX IF EXISTS IX_CustomerId ON Orders;
-```
+## DbUp Execution Process with Multiple Iterations
+DbUp ensures that database migrations execute sequentially while preventing duplicate execution of already applied scripts. The execution process follows these steps:
 
-Re-run the application to upgrade.
+1. **Initialization and Configuration:**
+   - The `DatabaseMigrationInitFilter` checks if `EnableDatabaseMigration` is set to `true` in the application settings.
+   - The database connection string is retrieved.
+   - The migration scripts directory is verified.
 
----
+2. **Ensuring Database Existence:**
+   - The database is created if it does not exist using `EnsureDatabase.For.PostgresqlDatabase(dbConnectionString);`.
 
-## **6. Notes on Rollback Strategy**
+3. **Advisory Lock for Concurrency Handling:**
+   - The process attempts to acquire an advisory lock to prevent multiple instances from running migrations simultaneously.
+   - If the lock is not acquired, it retries every 5 seconds for up to 60 seconds.
+
+4. **Checking and Executing Migrations:**
+   - DbUp checks if any new migration scripts exist.
+   - If migration is required, the scripts are executed sequentially using `DeployChanges.To.PostgresqlDatabase(dbConnectionString).WithScriptsFromFileSystem(migrationPath).Build();`.
+   - If migration succeeds, seed scripts are executed.
+
+5. **Handling Multiple Iterations:**
+   - Each time the application starts, DbUp checks for new migration scripts.
+   - Already applied scripts are skipped since DbUp tracks execution history in the database.
+   - New scripts (added in subsequent deployments) are applied in order.
+   - This ensures an incremental migration approach without reapplying old scripts.
+
+6. **Releasing the Advisory Lock:**
+   - Once migrations and seed scripts complete, the advisory lock is released.
+
+This process guarantees that only new scripts are executed while maintaining consistency and preventing race conditions in multi-instance environments.
+
+## Rollback Strategy Notes
 1. Rollbacks are **manual** with DbUp (DbUp does not support automatic rollbacks).
 2. Always test rollback scripts before deployment.
 3. Ensure rollback scripts reverse the exact changes made in migration scripts.
 
----
+## Advantages of Using DbUp
 
-## **7. Advanced Considerations**
-- **Versioning**: Store the executed scripts in a `SchemaVersions` table (DbUp handles this internally).
-- **Error Logging**: Use `DbUp.Engine.Output.IUpgradeLog` for detailed logging.
-- **Script Providers**: Use `WithScriptsEmbeddedInAssembly` for embedded scripts if you don’t want a file-based approach.
+1. **Simplicity**
+   - No complex ORM setup is required.
+   - Migration scripts are plain SQL, making them easy to write and review.
 
----
+2. **Transactional Migrations**
+   - Ensures that database schema changes are atomic and consistent.
 
-## **8. Conclusion**
-DbUp provides a simple yet robust way to handle schema migrations in a .NET API. By organizing scripts, setting up rollback mechanisms, and running migrations iteratively, you can ensure your database schema evolves seamlessly with your application.
+3. **Version Control Friendly**
+   - Migration scripts are stored as files, allowing version control.
 
+4. **Environment-Specific Seeding**
+   - Enables different seed data for different environments (Dev, QA, UAT).
+
+5. **Concurrency Handling**
+   - Advisory locks prevent multiple instances from running migrations simultaneously.
+
+6. **Logging Support**
+   - Logs migration progress using `DbUpLoggerExtension`.
+
+## Disadvantages of Using DbUp
+
+1. **No Built-in Rollback Support**
+   - DbUp does not provide automatic rollback functionality. Rollbacks must be managed manually via separate scripts in the `Rollbacks` folder.
+
+2. **Sequential Execution Requirement**
+   - Scripts execute in the order they are found in the directory; changing script execution order requires renaming files.
+
+3. **Limited ORM Integration**
+   - DbUp is not an ORM and does not integrate directly with Entity Framework.
+
+4. **No Schema Diffing**
+   - Unlike tools such as Liquibase or Flyway, DbUp does not generate schema diffs automatically.
+
+## Conclusion
+DbUp provides a lightweight, script-based approach to database migrations in .NET API projects. While it lacks built-in rollback and schema diffing features, it is simple, easy to integrate, and supports transactional execution, making it a reliable choice for managing database schema changes in database.

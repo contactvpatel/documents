@@ -22,6 +22,7 @@ dotnet add package DbUp.SqlServer
 ```
 
 ### 2. Setting Up DbUp Migration
+**Note:** All migration, rollback, and seed data scripts must be idempotent to ensure safe re-execution without causing conflicts or duplication.
 In the provided code, the `DatabaseMigrationInitFilter` class implements `IStartupFilter`, ensuring that database migrations are executed during application startup.
 
 #### **Key Components**:
@@ -292,6 +293,7 @@ DbUp ensures that database migrations execute sequentially while preventing dupl
    - DbUp checks if any new migration scripts exist.
    - If migration is required, the scripts are executed sequentially using `DeployChanges.To.PostgresqlDatabase(dbConnectionString).WithScriptsFromFileSystem(migrationPath).Build();`.
    - If migration succeeds, seed scripts are executed.
+   - **Note:** All migration, rollback, and seed data scripts should be idempotent to avoid issues when executed multiple times.
 
 5. **Handling Multiple Iterations:**
    - Each time the application starts, DbUp checks for new migration scripts.

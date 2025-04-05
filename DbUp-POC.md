@@ -57,6 +57,8 @@ using Npgsql;
 using PBR.Core.Models;
 using PBR.Util.Logging;
 using PBR.Util.Models;
+using System.Data;
+using System.Runtime.ExceptionServices;
 
 namespace PBR.Api.Filters
 {
@@ -64,7 +66,7 @@ namespace PBR.Api.Filters
     {
         private readonly IOptionsMonitor<AppSettingModel> _appSettingModel;
         private readonly IOptionsMonitor<DbConnectionModel> _dbConnectionModel;
-        public readonly ILogger _logger;
+        private readonly ILogger<DatabaseMigrationInitFilter> _logger;
 
         public DatabaseMigrationInitFilter(IOptionsMonitor<AppSettingModel> appSettingModel,
             IOptionsMonitor<DbConnectionModel> dbConnectionModel,
@@ -90,10 +92,10 @@ namespace PBR.Api.Filters
                 if (Directory.Exists(migrationPath) && Directory.EnumerateFiles(migrationPath).Any())
                 {
                     // Ensure Database exists, if not then create it
-                    EnsureDatabase.For.PostgresqlDatabase(dbConnectionString);
+                    EnsureDatabase.For.PostgresqlDatabase(dbConnectionString, dbUpLogger);
 
-                    using var connection = new NpgsqlConnection(dbConnectionString);
-                    connection.Open();
+                    using var dbLockConnection = new NpgsqlConnection(dbConnectionString);
+                    dbLockConnection.Open();
 
                     // Attempt to acquire the advisory lock with a timeout (Ensures only one process executes the DbUp migration if multiple processes are running simultaneously)
                     bool lockAcquired = false;
@@ -101,7 +103,7 @@ namespace PBR.Api.Filters
 
                     while ((DateTime.Now - startTime).TotalSeconds < 60) // Set a 60 seconds timeout for waiting for the lock
                     {
-                        using var lockCommand = new NpgsqlCommand($"SELECT pg_try_advisory_lock({_appSettingModel.CurrentValue.PostgresqlAdvisoryLockKey});", connection);
+                        using var lockCommand = new NpgsqlCommand($"SELECT pg_try_advisory_lock({_appSettingModel.CurrentValue.PostgresqlAdvisoryLockKey});", dbLockConnection);
                         var result = (bool)lockCommand.ExecuteScalar();
 
                         if (result)
@@ -146,18 +148,25 @@ namespace PBR.Api.Filters
                                     // Run Data Seed Scripts Only if Migration Succeeds
                                     SeedData(dbConnectionString);
                                 }
+                                else
+                                {
+                                    _logger.LogErrorExtension($"Database migration has failed. Error Message: {operation.Error.Message}", operation.Error);
+                                    CleanupResources(dbLockConnection);
+                                    // Immediately terminate the API if database migration fails to ensure previous stable API keeps running in kubernetes with a valid state
+                                    Environment.Exit(1);
+                                }
                             }
                         }
                         catch (Exception ex)
                         {
                             _logger.LogErrorExtension("An exception occurred during the database migration process.", ex);
+                            CleanupResources(dbLockConnection);
+                            // Immediately terminate the API if database migration fails to ensure previous stable API keeps running in kubernetes with a valid state
+                            Environment.Exit(1);
                         }
                         finally
                         {
-                            // Release the advisory lock after migrations/seeds are done
-                            using var unlockCommand = new NpgsqlCommand($"SELECT pg_advisory_unlock({_appSettingModel.CurrentValue.PostgresqlAdvisoryLockKey});", connection);
-                            unlockCommand.ExecuteNonQuery();
-                            connection.Close();
+                            CleanupResources(dbLockConnection);
                         }
                     }
                 }
@@ -203,7 +212,8 @@ namespace PBR.Api.Filters
                         }
                         else
                         {
-                            _logger.LogErrorExtension($"An error occurred during data seeding for {_appSettingModel.CurrentValue.Environment}.", seedResult.Error);
+                            _logger.LogErrorExtension($"An error occurred during data seeding for {_appSettingModel.CurrentValue.Environment}. Error Message: {seedResult.Error.Message}", seedResult.Error);
+                            ExceptionDispatchInfo.Capture(seedResult.Error).Throw();
                         }
                     }
                 }
@@ -211,6 +221,17 @@ namespace PBR.Api.Filters
                 {
                     _logger.LogInformationExtension("No seed data script found; skipping the seeding process.");
                 }
+            }
+        }
+
+        private void CleanupResources(NpgsqlConnection dbLockConnection)
+        {
+            if (dbLockConnection != null && dbLockConnection.State == ConnectionState.Open)
+            {
+                // Release the advisory lock after migrations/seeds are done
+                using var unlockCommand = new NpgsqlCommand($"SELECT pg_advisory_unlock({_appSettingModel.CurrentValue.PostgresqlAdvisoryLockKey});", dbLockConnection);
+                unlockCommand.ExecuteNonQuery();
+                dbLockConnection.Close();
             }
         }
     }
@@ -233,22 +254,36 @@ public class DbUpLoggerExtension : IUpgradeLog
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
-    public void WriteInformation(string format, params object[] args)
+    public void LogTrace(string format, params object[] args)
+    {
+        _logger.LogTraceExtension(string.Format(format, args));
+    }
+
+    public void LogDebug(string format, params object[] args)
+    {
+        _logger.LogDebugExtension(string.Format(format, args));
+    }
+
+    public void LogInformation(string format, params object[] args)
     {
         _logger.LogInformationExtension(string.Format(format, args));
     }
 
-    public void WriteError(string format, params object[] args)
+    public void LogWarning(string format, params object[] args)
+    {
+        _logger.LogWarningExtension(string.Format(format, args));
+    }
+
+    public void LogError(string format, params object[] args)
     {
         _logger.LogErrorExtension(string.Format(format, args), null);
     }
 
-    public void WriteWarning(string format, params object[] args)
+    public void LogError(Exception ex, string format, params object[] args)
     {
-        _logger.LogWarningExtension(string.Format(format, args));
+        _logger.LogErrorExtension(string.Format(format, args), ex);
     }
 }
-
 
 ```
 
